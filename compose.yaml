@@ -1,0 +1,56 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vehicles}
+      POSTGRES_USER: ${POSTGRES_USER:-vehicles}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vehicles}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vehicles} -d ${POSTGRES_DB:-vehicles}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://vehicles:vehicles@db:5432/vehicles}
+      IMAGE_DIR: /data/images
+    volumes:
+      - vehicle_images:/data/images
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scraper:
+    build: .
+    entrypoint: ["python", "-m", "app.scraper"]
+    command: []
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://vehicles:vehicles@db:5432/vehicles}
+      SCRAPER_CONCURRENCY: ${SCRAPER_CONCURRENCY:-8}
+      SCRAPER_PAGE_CONCURRENCY: ${SCRAPER_PAGE_CONCURRENCY:-4}
+      REQUEST_MIN_DELAY_SECONDS: ${REQUEST_MIN_DELAY_SECONDS:-0.15}
+      REQUEST_MAX_DELAY_SECONDS: ${REQUEST_MAX_DELAY_SECONDS:-0.45}
+      REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-30}
+      REQUEST_RETRIES: ${REQUEST_RETRIES:-3}
+      DOWNLOAD_IMAGES: ${DOWNLOAD_IMAGES:-false}
+      IMAGE_DIR: /data/images
+    volumes:
+      - vehicle_images:/data/images
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["tools"]
+
+volumes:
+  postgres_data:
+  vehicle_images:
