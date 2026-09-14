@@ -9,6 +9,17 @@ from bs4 import BeautifulSoup, Tag
 
 BASE_URL = "https://www.porscheinterauto.net"
 LISTING_URL = f"{BASE_URL}/vozila/?filter=status:1&uredi=asc&uredi_po=cena_eur"
+BODY_TYPES = {
+    22: "cabriolet",
+    8: "coupe",
+    12: "dostavno",
+    6: "enoprostorec",
+    4: "karavan",
+    1: "kombilimuzina",
+    2: "limuzina",
+    24: "SUV",
+    3: "terenec/šasija s kabino",
+}
 
 
 def clean(value: str | None) -> str:
@@ -68,6 +79,7 @@ class VehicleData:
     title: str
     brand: str | None = None
     model: str | None = None
+    body_type: str | None = None
     source_vehicle_id: str | None = None
     condition: str | None = None
     first_registration: date | None = None

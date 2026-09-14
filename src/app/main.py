@@ -5,15 +5,18 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import distinct, func, select
+from sqlalchemy import distinct, extract, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db import get_db, init_db
-from app.models import Vehicle, VehicleEquipment
-from app.schemas import VehicleOut, VehiclePage
+from app.models import Vehicle, VehicleConsumptionProfile, VehicleEquipment, VehicleSpecProfile
+from app.schemas import VehicleConsumptionOut, VehicleOut, VehiclePage, VehicleSpecOut
 from app.scraper.parsers import normalize_text
+from app.specs import best_consumption, best_spec
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
@@ -28,6 +31,27 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], a
 app.mount("/media", StaticFiles(directory=str(settings.image_dir), check_dir=False), name="media")
 
 
+def spec_match_conditions():
+    registration_year = extract("year", Vehicle.first_registration)
+    return (
+        func.lower(VehicleSpecProfile.brand) == func.lower(Vehicle.brand),
+        func.lower(VehicleSpecProfile.model) == func.lower(Vehicle.model),
+        or_(VehicleSpecProfile.body_type.is_(None), func.lower(VehicleSpecProfile.body_type) == func.lower(Vehicle.body_type)),
+        or_(Vehicle.first_registration.is_(None), VehicleSpecProfile.year_from.is_(None), registration_year >= VehicleSpecProfile.year_from),
+        or_(Vehicle.first_registration.is_(None), VehicleSpecProfile.year_to.is_(None), registration_year <= VehicleSpecProfile.year_to),
+    )
+
+
+def serialize_vehicle(item: Vehicle, profiles: list[VehicleSpecProfile], consumption_profiles: list[VehicleConsumptionProfile]) -> VehicleOut:
+    profile = best_spec(item, profiles)
+    consumption = best_consumption(item, consumption_profiles)
+    result = VehicleOut.model_validate(item)
+    return result.model_copy(update={
+        "specs": VehicleSpecOut.model_validate(profile) if profile else None,
+        "consumption": VehicleConsumptionOut.model_validate(consumption) if consumption else None,
+    })
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -36,7 +60,8 @@ async def health() -> dict[str, str]:
 @app.get("/vehicles", response_model=VehiclePage)
 async def vehicles(
     db: Annotated[AsyncSession, Depends(get_db)],
-    brand: str | None = None,
+    brand: list[str] = Query(default=[]),
+    body_type: str | None = None,
     model: str | None = None,
     fuel: str | None = None,
     transmission_type: Literal["manual", "automatic", "semiautomatic"] | None = None,
@@ -47,6 +72,8 @@ async def vehicles(
     max_power_kw: int | None = Query(None, ge=0),
     min_price_eur: int | None = Query(None, ge=0),
     max_price_eur: int | None = Query(None, ge=0),
+    min_boot_liters: int | None = Query(None, ge=0),
+    min_rear_space_rating: int | None = Query(None, ge=1, le=5),
     has_tow_hitch: bool | None = None,
     warranty_available: bool | None = None,
     equipment: list[str] = Query(default=[]),
@@ -59,7 +86,9 @@ async def vehicles(
     if available_only:
         filters.append(Vehicle.is_available.is_(True))
     if brand:
-        filters.append(func.lower(Vehicle.brand) == brand.lower())
+        filters.append(func.lower(Vehicle.brand).in_([value.lower() for value in brand]))
+    if body_type:
+        filters.append(func.lower(Vehicle.body_type) == body_type.lower())
     if model:
         filters.append(func.lower(Vehicle.model).contains(model.lower()))
     if fuel:
@@ -88,6 +117,18 @@ async def vehicles(
             .where(VehicleEquipment.vehicle_id == Vehicle.id, VehicleEquipment.normalized_name.contains(needle))
             .exists()
         )
+    if min_boot_liters is not None:
+        filters.append(
+            select(VehicleSpecProfile.id)
+            .where(*spec_match_conditions(), VehicleSpecProfile.boot_liters >= min_boot_liters)
+            .exists()
+        )
+    if min_rear_space_rating is not None:
+        filters.append(
+            select(VehicleSpecProfile.id)
+            .where(*spec_match_conditions(), VehicleSpecProfile.rear_space_rating >= min_rear_space_rating)
+            .exists()
+        )
 
     sort_column = {
         "price_asc": Vehicle.regular_price_eur.asc().nullslast(),
@@ -106,7 +147,9 @@ async def vehicles(
         .offset(offset)
     )
     result = (await db.scalars(query)).all()
-    return VehiclePage(items=[VehicleOut.model_validate(v) for v in result], total=total or 0, limit=limit, offset=offset)
+    profiles = list((await db.scalars(select(VehicleSpecProfile))).all())
+    consumption_profiles = list((await db.scalars(select(VehicleConsumptionProfile))).all())
+    return VehiclePage(items=[serialize_vehicle(v, profiles, consumption_profiles) for v in result], total=total or 0, limit=limit, offset=offset)
 
 
 @app.get("/vehicles/{vehicle_id}", response_model=VehicleOut)
@@ -116,7 +159,15 @@ async def vehicle(vehicle_id: int, db: Annotated[AsyncSession, Depends(get_db)])
     )
     if not item:
         raise HTTPException(404, "Vehicle not found")
-    return VehicleOut.model_validate(item)
+    profiles = list((await db.scalars(select(VehicleSpecProfile))).all())
+    consumption_profiles = list((await db.scalars(select(VehicleConsumptionProfile))).all())
+    return serialize_vehicle(item, profiles, consumption_profiles)
+
+
+@app.get("/spec-profiles", response_model=list[VehicleSpecOut])
+async def spec_profiles(db: Annotated[AsyncSession, Depends(get_db)]) -> list[VehicleSpecOut]:
+    profiles = (await db.scalars(select(VehicleSpecProfile).order_by(VehicleSpecProfile.brand, VehicleSpecProfile.model))).all()
+    return [VehicleSpecOut.model_validate(profile) for profile in profiles]
 
 
 @app.get("/facets")
@@ -127,7 +178,12 @@ async def facets(db: Annotated[AsyncSession, Depends(get_db)]) -> dict:
     return {
         "brands": await values(Vehicle.brand),
         "models": await values(Vehicle.model),
+        "body_types": await values(Vehicle.body_type),
         "fuels": await values(Vehicle.fuel),
         "transmissions": await values(Vehicle.transmission_type),
         "dealerships": await values(Vehicle.dealership),
     }
+
+
+# Keep this mount last so API routes above take precedence.
+app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="frontend")

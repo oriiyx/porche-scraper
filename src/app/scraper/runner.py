@@ -12,15 +12,57 @@ from app.config import settings
 from app.db import SessionLocal, init_db
 from app.models import Vehicle, VehicleEquipment, VehicleImage
 from app.scraper.http import HttpClient
-from app.scraper.parsers import LISTING_URL, ListingVehicle, VehicleData, parse_detail, parse_listing
+from app.scraper.parsers import BODY_TYPES, LISTING_URL, ListingVehicle, VehicleData, normalize_text, parse_detail, parse_listing
 
 logger = logging.getLogger(__name__)
+
+FALLBACK_PICKUP_MODELS = {"amarok", "hilux", "navara", "ranger"}
 
 
 def page_url(page: int) -> str:
     if page == 1:
         return LISTING_URL
     return f"https://www.porscheinterauto.net/vozila/p{page}.html?filter=status%3A1&uredi=asc&uredi_po=cena_eur"
+
+
+def body_page_url(body_id: int, page: int = 1) -> str:
+    path = "/vozila/" if page == 1 else f"/vozila/p{page}.html"
+    return f"https://www.porscheinterauto.net{path}?filter=oblika_id%3A{body_id}.status%3A1"
+
+
+async def collect_body_types(client: HttpClient) -> dict[str, str]:
+    """Map listing URLs to the site's exact body type without opening details."""
+    first_pages = await asyncio.gather(*(client.get(body_page_url(body_id)) for body_id in BODY_TYPES))
+    result: dict[str, str] = {}
+    remaining: list[tuple[str, int, int]] = []
+    for (body_id, label), html in zip(BODY_TYPES.items(), first_pages, strict=True):
+        items, pages = parse_listing(html)
+        result.update({item.source_url: label for item in items})
+        remaining.extend((label, body_id, page) for page in range(2, pages + 1))
+    other_pages = await asyncio.gather(*(client.get(body_page_url(body_id, page)) for _, body_id, page in remaining))
+    for (label, _, _), html in zip(remaining, other_pages, strict=True):
+        items, _ = parse_listing(html)
+        result.update({item.source_url: label for item in items})
+    return result
+
+
+async def save_body_types(body_types: dict[str, str]) -> None:
+    async with SessionLocal() as session:
+        for label in set(body_types.values()):
+            urls = [url for url, body_type in body_types.items() if body_type == label]
+            if urls:
+                await session.execute(update(Vehicle).where(Vehicle.source_url.in_(urls)).values(body_type=label))
+        await session.commit()
+
+
+def add_fallback_body_types(items: list[ListingVehicle], body_types: dict[str, str]) -> None:
+    """Fill obvious pickup models which the source leaves outside its body filters."""
+    for item in items:
+        if item.source_url in body_types:
+            continue
+        title_words = set(normalize_text(item.title).split())
+        if title_words & FALLBACK_PICKUP_MODELS:
+            body_types[item.source_url] = "pickup"
 
 
 async def download_images(client: HttpClient, vehicle: VehicleData) -> list[str | None]:
@@ -99,6 +141,9 @@ async def run(overwrite: bool = False, limit: int | None = None, download: bool 
         items_by_url = {item.source_url: item for item in items}
         items = list(items_by_url.values())
         counters["found"] = len(items)
+        body_types = await collect_body_types(listing_client)
+        add_fallback_body_types(items, body_types)
+        await save_body_types(body_types)
         if limit is not None:
             items = items[:limit]
 
@@ -118,6 +163,7 @@ async def run(overwrite: bool = False, limit: int | None = None, download: bool 
                 try:
                     html = await detail_client.get(item.source_url)
                     data = parse_detail(html, item)
+                    data.body_type = body_types.get(item.source_url)
                     paths = await download_images(detail_client, data)
                     await save_vehicle(data, paths, overwrite)
                     counters["updated" if item.source_url in existing_urls else "new"] += 1

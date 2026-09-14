@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from app.scraper.parsers import ListingVehicle, normalize_text, parse_detail, parse_listing
+from app.scraper.runner import add_fallback_body_types
 
 
 def test_listing_parser():
@@ -47,3 +48,13 @@ def test_tow_hitch_abbreviation_in_title():
     html = '<div class="vehicle-header"><h1 class="title">Citan - VL.KLJUKA</h1><div class="vehicle-card-badge">TAKOJ NA VOLJO</div></div>'
     result = parse_detail(html, ListingVehicle("https://example.test/car", "Citan - VL.KLJUKA"))
     assert result.has_tow_hitch is True
+
+
+def test_pickup_body_type_fallback_only_fills_missing_values():
+    amarok = ListingVehicle("https://example.test/amarok", "Volkswagen Amarok Dark Label")
+    suv = ListingVehicle("https://example.test/suv", "Volkswagen Tiguan")
+    body_types = {suv.source_url: "SUV"}
+
+    add_fallback_body_types([amarok, suv], body_types)
+
+    assert body_types == {suv.source_url: "SUV", amarok.source_url: "pickup"}

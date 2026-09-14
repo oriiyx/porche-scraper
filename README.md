@@ -14,6 +14,7 @@ docker compose --profile tools run --rm scraper
 
 API in interaktivna dokumentacija sta nato na:
 
+- `http://localhost:8000/` — spletni pregled in filtriranje vozil
 - `http://localhost:8000/docs`
 - `http://localhost:8000/vehicles`
 - `http://localhost:8000/facets`
@@ -60,13 +61,15 @@ Poljubno opremo lahko zahtevate z enim ali več parametri, na primer:
 /vehicles?equipment=ogrevani%20sedeži&equipment=parkirni%20senzor
 ```
 
-Uporabni filtri: `brand`, `model`, `fuel`, `transmission_type`, razpon kilometrine, moči in redne cene, `has_tow_hitch`, `warranty_available`, poljubna `equipment`, razvrščanje in paginacija. API privzeto vrne samo trenutno razpoložljiva vozila.
+Uporabni filtri: `brand`, `model`, `body_type`, `fuel`, `transmission_type`, razpon kilometrine, moči in redne cene, `min_boot_liters`, `min_rear_space_rating`, `has_tow_hitch`, `warranty_available`, poljubna `equipment`, razvrščanje in paginacija. Za več znamk ponovite parameter, na primer `?brand=Audi&brand=Volkswagen`. API privzeto vrne samo trenutno razpoložljiva vozila.
 
 ## Podatkovni model
 
 - `vehicles`: indeksirana polja za filtre, URL oglasa kot unikatni ključ, redna/finančna cena, jamstvo, lokacija, VIN in status razpoložljivosti.
 - `vehicle_images`: HD URL, vrstni red in neobvezna lokalna kopija.
 - `vehicle_equipment`: ena vrstica na kos opreme, kategorija ter normalizirano ime brez šumnikov za iskanje.
+- `vehicle_spec_profiles`: ročno preverjeni seed profili po modelu, generaciji, karoseriji in letniku; vsebujejo prostornino in mere prtljažnika, zadnji prostor, ISOFIX ter Euro NCAP.
+- `vehicle_consumption_profiles`: ločeni profili porabe po modelu, letniku, gorivu, moči in po potrebi menjalniku. API izbere najbolj specifičen profil in vrne tudi merilni standard ter URL vira. Obstoječa vozila se z obema profiloma povežejo dinamično in se ne spreminjajo.
 
 Po uspešnem celotnem zajemu se prej shranjena vozila, ki jih ni več na listingu `status:1`, označijo z `is_available=false`; ne izbrišejo se. Če zajem podrobnosti odpove ali uporabite `--limit`, scraper zaradi varnosti ne deaktivira drugih zapisov.
 

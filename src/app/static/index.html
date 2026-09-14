@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="sl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Pregled in filtriranje vozil Porsche Inter Auto">
+  <title>PIA Vehicle Finder</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand-mark" href="/" aria-label="Domov">
+      <span class="brand-dot"></span>
+      <span>PIA <strong>Vehicle Finder</strong></span>
+    </a>
+    <div class="top-actions">
+      <span class="live-pill"><span></span> Trenutna zaloga</span>
+      <a class="api-link" href="/docs" target="_blank" rel="noreferrer">API dokumentacija ↗</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Pametnejše iskanje avtomobila</p>
+      <h1>Najdi vozilo, ki ima<br><em>točno pravo opremo.</em></h1>
+      <p class="hero-copy">Filtriraj trenutno razpoložljiva vozila po tehničnih podatkih in opremi, ki je na običajnih oglasnikih težko iskati.</p>
+      <div class="hero-stats">
+        <div><strong id="vehicleTotal">—</strong><span>vozil ustreza</span></div>
+        <div><strong id="activeFilterCount">0</strong><span>aktivnih filtrov</span></div>
+      </div>
+    </section>
+
+    <section class="finder-shell">
+      <button id="filterToggle" class="filter-toggle" type="button" aria-expanded="false">Filtri <span id="mobileFilterCount">0</span></button>
+
+      <aside id="filtersPanel" class="filters-panel">
+        <div class="filter-heading">
+          <div><span class="section-index">01</span><h2>Filtri</h2></div>
+          <button id="resetFilters" class="text-button" type="button">Ponastavi</button>
+        </div>
+
+        <form id="filtersForm">
+          <div class="field full">
+            <span>Znamka</span>
+            <details class="multi-select" id="brandPicker">
+              <summary id="brandSummary">Vse znamke</summary>
+              <div id="brandOptions" class="multi-options"></div>
+            </details>
+          </div>
+
+          <label class="field full">
+            <span>Model vsebuje</span>
+            <input name="model" type="search" placeholder="npr. Passat">
+          </label>
+
+          <label class="field full">
+            <span>Oblika</span>
+            <select name="body_type" id="bodyType"><option value="">Vse oblike</option></select>
+          </label>
+
+          <div class="field-row">
+            <label class="field">
+              <span>Gorivo</span>
+              <select name="fuel" id="fuel"><option value="">Vsa goriva</option></select>
+            </label>
+            <label class="field">
+              <span>Menjalnik</span>
+              <select name="transmission_type">
+                <option value="">Vsi</option>
+                <option value="manual">Ročni</option>
+                <option value="automatic">Avtomatski</option>
+                <option value="semiautomatic">Polavtomatski</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="field-row">
+            <label class="field">
+              <span>Največ kilometrov</span>
+              <input name="max_mileage_km" type="number" min="0" step="1000" placeholder="100.000">
+            </label>
+            <label class="field">
+              <span>Moč motorja</span>
+              <div class="suffix-input"><input name="power_kw" type="number" min="0" placeholder="110"><b>kW</b></div>
+            </label>
+          </div>
+
+          <div class="field-row">
+            <label class="field">
+              <span>Cena od</span>
+              <div class="suffix-input"><input name="min_price_eur" type="number" min="0" step="500"><b>€</b></div>
+            </label>
+            <label class="field">
+              <span>Cena do</span>
+              <div class="suffix-input"><input name="max_price_eur" type="number" min="0" step="500"><b>€</b></div>
+            </label>
+          </div>
+
+          <div class="field-row">
+            <label class="field">
+              <span>Prtljažnik najmanj</span>
+              <div class="suffix-input"><input name="min_boot_liters" type="number" min="0" step="50" placeholder="500"><b>l</b></div>
+            </label>
+            <label class="field">
+              <span>Prostor zadaj</span>
+              <select name="min_rear_space_rating">
+                <option value="">Vse ocene</option>
+                <option value="3">Vsaj 3 / 5</option>
+                <option value="4">Vsaj 4 / 5</option>
+                <option value="5">5 / 5</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field full">
+            <span>Oprema vsebuje</span>
+            <input name="equipment" type="search" placeholder="npr. ogrevani sedeži">
+          </label>
+
+          <div class="switches">
+            <label class="switch-row">
+              <span><b>Vlečna kljuka</b><small>Samo vozila z vlečno napravo</small></span>
+              <input name="has_tow_hitch" type="checkbox"><i></i>
+            </label>
+            <label class="switch-row">
+              <span><b>Jamstvo na voljo</b><small>Možnost jamstva pri prodajalcu</small></span>
+              <input name="warranty_available" type="checkbox"><i></i>
+            </label>
+          </div>
+        </form>
+      </aside>
+
+      <div class="results-panel">
+        <div class="results-toolbar">
+          <div><span class="section-index">02</span><h2>Rezultati</h2></div>
+          <label class="sort-control">Razvrsti
+            <select id="sort">
+              <option value="price_asc">Cena: najnižja</option>
+              <option value="price_desc">Cena: najvišja</option>
+              <option value="mileage_asc">Najmanj kilometrov</option>
+              <option value="power_desc">Največ moči</option>
+              <option value="newest">Najnovejša registracija</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="status" class="status" aria-live="polite"></div>
+        <div id="vehiclesGrid" class="vehicles-grid"></div>
+        <div id="emptyState" class="empty-state" hidden>
+          <span>0</span>
+          <h3>Ni zadetkov</h3>
+          <p>Poskusi razširiti filtre ali najprej zaženi scraper.</p>
+          <button id="emptyReset" type="button">Ponastavi filtre</button>
+        </div>
+        <nav id="pagination" class="pagination" aria-label="Paginacija"></nav>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="vehicleDialog">
+    <button class="dialog-close" type="button" aria-label="Zapri">×</button>
+    <div id="dialogContent"></div>
+  </dialog>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
